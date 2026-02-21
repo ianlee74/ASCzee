@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ASCzee.Tests/ASCzee.Tests.csproj" />
+    <Project Path="src/ASCzee/ASCzee.csproj" />
+  </Folder>
+</Solution>
