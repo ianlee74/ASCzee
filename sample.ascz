@@ -1,0 +1,35 @@
+# Welcome to ASCzee
+
+An ASCII markup driven presentation tool for the terminal.
+
+Navigate slides with:
+  ← / Backspace  – previous slide
+  → / Space / Enter – next slide
+  Q / Escape  – quit
+
+---
+# Getting Started
+
+Create a plain-text file with the .ascz extension.
+
+Separate slides with a line containing only:
+
+  ---
+
+The first line starting with "# " becomes the slide title.
+
+---
+# Example Slide
+
+This is the body of a slide.
+
+  - Bullet point A
+  - Bullet point B
+  - Bullet point C
+
+---
+# That's It!
+
+Run your presentation:
+
+  ASCzee my-talk.ascz
