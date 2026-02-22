@@ -5,6 +5,9 @@ namespace ASCzee;
 /// </summary>
 public class Presentation
 {
-    public IReadOnlyList<Slide> Slides { get; init; } = [];
-    public string Title { get; init; } = string.Empty;
+    public string SourcePath { get; init; } = string.Empty;
+    public string NotesPath { get; init; } = string.Empty;
+    public List<Slide> Slides { get; init; } = [];
+
+    public string Title => Slides.FirstOrDefault(s => s.SlideType is not SlideType.NotesSlide)?.Title ?? string.Empty;
 }

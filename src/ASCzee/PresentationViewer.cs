@@ -2,78 +2,801 @@ namespace ASCzee;
 
 /// <summary>
 /// Interactive console viewer for an ASCzee <see cref="Presentation"/>.
-///
-/// Navigation:
-///   Right arrow / Space / Enter  – next slide
-///   Left arrow / Backspace       – previous slide
-///   Q / Escape                   – quit
 /// </summary>
-public class PresentationViewer(Presentation presentation)
+public class PresentationViewer(Presentation presentation, NotesArtifactService notesArtifactService, SongPromptGenerator songPromptGenerator)
 {
+    private const int SunoPromptCharacterLimit = 1000;
+
+    private enum SongPromptAction
+    {
+        OpenInNotepad,
+        CopyToClipboard,
+        OpenSunoCreate
+    }
+
+    private static readonly SongPromptAction[] SongPromptActions =
+    [
+        SongPromptAction.OpenInNotepad,
+        SongPromptAction.CopyToClipboard,
+        SongPromptAction.OpenSunoCreate
+    ];
+
+    private static readonly string[] PopularGenres =
+    [
+        "Pop",
+        "Rock",
+        "Hip-Hop / Rap",
+        "R&B",
+        "Country",
+        "Jazz",
+        "Blues",
+        "Classical",
+        "Electronic",
+        "EDM / Dance",
+        "Reggae",
+        "Latin",
+        "Folk",
+        "Soul",
+        "Funk",
+        "Metal",
+        "Punk",
+        "Indie",
+        "Alternative",
+        "K-Pop",
+        "Afrobeats",
+        "House",
+        "Techno",
+        "Trance",
+        "Lo-fi",
+        "Ambient",
+        "Other (custom)"
+    ];
+
     private readonly Presentation _presentation = presentation;
-    private int _currentIndex;
+    private readonly NotesArtifactService _notesArtifactService = notesArtifactService;
+    private readonly SongPromptGenerator _songPromptGenerator = songPromptGenerator;
+    private readonly PresentationSession _session = new();
+
+    private string? _songPrompt;
+    private string? _songPromptPath;
+    private string _songGenre = "any genre";
+    private bool _isSongPromptOpen;
+    private int _songPromptFocusIndex;
+    private string? _songPromptStatusMessage;
+    private readonly Dictionary<int, int> _rowToOptionIndex = [];
 
     public void Run()
     {
+        Console.Clear();
+
         if (_presentation.Slides.Count == 0)
         {
             Console.WriteLine("No slides to display.");
             return;
         }
 
+        _session.Notes = _notesArtifactService.ExtractNotesFromPresentation(_presentation);
+        EnsureNotesSlide();
+        EnableMouseTracking();
+
         Console.CursorVisible = false;
-        RenderSlide();
+        RenderCurrentView();
 
         while (true)
         {
             var key = Console.ReadKey(intercept: true);
+            var action = InputActionMapper.Map(key);
 
-            if (key.Key is ConsoleKey.Q or ConsoleKey.Escape)
+            if (_session.IsMainMenuOpen)
+            {
+                if (HandleMainMenuAction(action))
+                {
+                    break;
+                }
+
+                RenderCurrentView();
+                continue;
+            }
+
+            if (HandlePresentationAction(action))
+            {
                 break;
+            }
 
-            if (key.Key is ConsoleKey.RightArrow or ConsoleKey.Spacebar or ConsoleKey.Enter)
-            {
-                if (_currentIndex < _presentation.Slides.Count - 1)
-                {
-                    _currentIndex++;
-                    RenderSlide();
-                }
-            }
-            else if (key.Key is ConsoleKey.LeftArrow or ConsoleKey.Backspace)
-            {
-                if (_currentIndex > 0)
-                {
-                    _currentIndex--;
-                    RenderSlide();
-                }
-            }
+            RenderCurrentView();
         }
 
+        DisableMouseTracking();
         Console.CursorVisible = true;
         Console.Clear();
     }
 
-    private void RenderSlide()
+    private bool HandlePresentationAction(InputAction action)
+    {
+        if (_isSongPromptOpen)
+        {
+            return HandleSongPromptAction(action);
+        }
+
+        switch (action)
+        {
+            case InputAction.NextSlide:
+                if (_session.CurrentSlideIndex < _presentation.Slides.Count - 1)
+                {
+                    _session.CurrentSlideIndex++;
+                    _songPrompt = null;
+                }
+                return false;
+
+            case InputAction.PreviousSlide:
+                if (_session.CurrentSlideIndex > 0)
+                {
+                    _session.CurrentSlideIndex--;
+                }
+                return false;
+
+            case InputAction.MoveOptionFocusUp:
+                MoveFocus(-1);
+                return false;
+
+            case InputAction.MoveOptionFocusDown:
+                MoveFocus(1);
+                return false;
+
+            case InputAction.ToggleOption:
+                ToggleFocusedOption();
+                return false;
+
+            case InputAction.AddNote:
+                CaptureNote();
+                return false;
+
+            case InputAction.JumpToNotes:
+                JumpToNotes();
+                return false;
+
+            case InputAction.Escape:
+                if (TryHandleMouseClickSequence())
+                {
+                    return false;
+                }
+
+                if (CurrentSlide().SlideType == SlideType.NotesSlide && _session.PreviousSlideIndexBeforeNotesJump.HasValue)
+                {
+                    _session.CurrentSlideIndex = _session.PreviousSlideIndexBeforeNotesJump.Value;
+                    _session.PreviousSlideIndexBeforeNotesJump = null;
+                }
+                else
+                {
+                    _session.IsMainMenuOpen = true;
+                }
+
+                return false;
+
+            case InputAction.Confirm:
+                return false;
+
+            case InputAction.None:
+            default:
+                return false;
+        }
+    }
+
+    private bool HandleMainMenuAction(InputAction action)
+    {
+        switch (action)
+        {
+            case InputAction.MoveOptionFocusUp:
+                _session.MainMenuState.MoveUp();
+                return false;
+
+            case InputAction.MoveOptionFocusDown:
+                _session.MainMenuState.MoveDown();
+                return false;
+
+            case InputAction.Confirm:
+                return ExecuteMainMenuAction(_session.MainMenuState.FocusedAction);
+
+            case InputAction.Escape:
+                _session.IsMainMenuOpen = false;
+                _songPrompt = null;
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    private bool ExecuteMainMenuAction(MainMenuAction action)
+    {
+        switch (action)
+        {
+            case MainMenuAction.Exit:
+                _session.IsMainMenuOpen = false;
+                return true;
+
+            case MainMenuAction.StartNew:
+                _notesArtifactService.Delete(_presentation.NotesPath);
+                _session.Notes.Clear();
+                _songPrompt = null;
+                _isSongPromptOpen = false;
+                foreach (var slide in _presentation.Slides)
+                {
+                    foreach (var option in slide.OptionItems)
+                    {
+                        option.IsSelected = false;
+                    }
+                }
+
+                RemoveNotesSlide();
+                EnsureNotesSlide();
+                _session.CurrentSlideIndex = 0;
+                _session.PreviousSlideIndexBeforeNotesJump = null;
+                _session.IsMainMenuOpen = false;
+                PersistState();
+                return false;
+
+            case MainMenuAction.CreateSong:
+                if (StartSongPromptFlow())
+                {
+                    _session.IsMainMenuOpen = false;
+                }
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    private void CaptureNote()
+    {
+        Console.CursorVisible = true;
+        Console.SetCursorPosition(0, Math.Max(0, Console.WindowHeight - 2));
+        Console.Write(new string(' ', Math.Max(10, Console.WindowWidth - 1)));
+        Console.SetCursorPosition(0, Math.Max(0, Console.WindowHeight - 2));
+        Console.Write("Note: ");
+        var note = Console.ReadLine()?.Trim();
+        Console.CursorVisible = false;
+
+        if (string.IsNullOrWhiteSpace(note))
+        {
+            return;
+        }
+
+        _session.Notes.Add(note);
+        EnsureNotesSlide();
+        PersistState();
+    }
+
+    private void JumpToNotes()
+    {
+        var notesIndex = EnsureNotesSlide();
+        _session.PreviousSlideIndexBeforeNotesJump = _session.CurrentSlideIndex;
+        _session.CurrentSlideIndex = notesIndex;
+    }
+
+    private int EnsureNotesSlide()
+    {
+        var notesSlide = _presentation.Slides.FirstOrDefault(s => s.SlideType == SlideType.NotesSlide);
+        if (notesSlide is null)
+        {
+            notesSlide = new Slide
+            {
+                Title = NotesArtifactService.NotesHeading,
+                SlideType = SlideType.NotesSlide
+            };
+            _presentation.Slides.Add(notesSlide);
+        }
+
+        notesSlide.BodyLines = _session.Notes.Count == 0
+            ? ["- No notes captured yet."]
+            : _session.Notes.Select(note => $"- {note}").ToList();
+
+        return _presentation.Slides.IndexOf(notesSlide);
+    }
+
+    private void RemoveNotesSlide()
+    {
+        _presentation.Slides.RemoveAll(s => s.SlideType == SlideType.NotesSlide);
+    }
+
+    private void MoveFocus(int delta)
+    {
+        var slide = CurrentSlide();
+        if (slide.OptionItems.Count == 0)
+        {
+            return;
+        }
+
+        var current = _session.GetFocusIndex(_session.CurrentSlideIndex);
+        var next = (current + delta) % slide.OptionItems.Count;
+        if (next < 0)
+        {
+            next += slide.OptionItems.Count;
+        }
+
+        _session.SetFocusIndex(_session.CurrentSlideIndex, next);
+    }
+
+    private void ToggleFocusedOption()
+    {
+        var slide = CurrentSlide();
+        if (slide.OptionItems.Count == 0)
+        {
+            return;
+        }
+
+        var focus = _session.GetFocusIndex(_session.CurrentSlideIndex);
+        if (focus < 0 || focus >= slide.OptionItems.Count)
+        {
+            return;
+        }
+
+        slide.OptionItems[focus].IsSelected = !slide.OptionItems[focus].IsSelected;
+        PersistState();
+    }
+
+    private void PersistState()
+    {
+        try
+        {
+            _notesArtifactService.Save(_presentation, _session.Notes);
+        }
+        catch
+        {
+            // Runtime presentation should continue even if file persistence fails.
+        }
+    }
+
+    private Slide CurrentSlide() => _presentation.Slides[_session.CurrentSlideIndex];
+
+    private bool HandleSongPromptAction(InputAction action)
+    {
+        switch (action)
+        {
+            case InputAction.MoveOptionFocusUp:
+                _songPromptFocusIndex = (_songPromptFocusIndex - 1 + SongPromptActions.Length) % SongPromptActions.Length;
+                return false;
+
+            case InputAction.MoveOptionFocusDown:
+                _songPromptFocusIndex = (_songPromptFocusIndex + 1) % SongPromptActions.Length;
+                return false;
+
+            case InputAction.Confirm:
+                ExecuteSongPromptAction(SongPromptActions[_songPromptFocusIndex]);
+                return false;
+
+            case InputAction.Escape:
+                _isSongPromptOpen = false;
+                _songPromptStatusMessage = null;
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    private bool StartSongPromptFlow()
+    {
+        var genreSelection = PromptForGenreSelection();
+        if (string.IsNullOrWhiteSpace(genreSelection))
+        {
+            _songPromptStatusMessage = "Song prompt creation canceled.";
+            return false;
+        }
+
+        _songGenre = genreSelection;
+
+        _songPrompt = _songPromptGenerator.GeneratePrompt(_presentation, _session.Notes, _songGenre);
+        SaveSongPromptToFile();
+        _songPromptFocusIndex = 0;
+        _songPromptStatusMessage = null;
+        _isSongPromptOpen = true;
+        return true;
+    }
+
+    private string? PromptForGenreSelection()
+    {
+        var selectedIndex = 0;
+
+        while (true)
+        {
+            Console.Clear();
+            var width = Math.Max(20, Console.WindowWidth);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(new string('═', width));
+            Console.WriteLine(Center("SELECT SONG GENRE", width));
+            Console.WriteLine(new string('═', width));
+            Console.ResetColor();
+            Console.WriteLine();
+
+            for (var index = 0; index < PopularGenres.Length; index++)
+            {
+                var prefix = index == selectedIndex ? ">" : " ";
+                if (index == selectedIndex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"{prefix} {PopularGenres[index]}");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.WriteLine($"{prefix} {PopularGenres[index]}");
+                }
+            }
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("Use ↑/↓ and Enter to select. Press Esc to cancel.");
+            Console.ResetColor();
+
+            var action = InputActionMapper.Map(Console.ReadKey(intercept: true));
+            switch (action)
+            {
+                case InputAction.MoveOptionFocusUp:
+                    selectedIndex = (selectedIndex - 1 + PopularGenres.Length) % PopularGenres.Length;
+                    break;
+
+                case InputAction.MoveOptionFocusDown:
+                    selectedIndex = (selectedIndex + 1) % PopularGenres.Length;
+                    break;
+
+                case InputAction.Confirm:
+                    var selectedGenre = PopularGenres[selectedIndex];
+                    if (selectedGenre.StartsWith("Other", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var customGenre = PromptForInput("Enter custom genre: ");
+                        return string.IsNullOrWhiteSpace(customGenre) ? "Pop" : customGenre.Trim();
+                    }
+
+                    return selectedGenre;
+
+                case InputAction.Escape:
+                    return null;
+            }
+        }
+    }
+
+    private void ExecuteSongPromptAction(SongPromptAction action)
+    {
+        switch (action)
+        {
+            case SongPromptAction.OpenInNotepad:
+                SaveSongPromptToFile();
+                if (string.IsNullOrWhiteSpace(_songPromptPath))
+                {
+                    _songPromptStatusMessage = "Unable to determine prompt file path.";
+                    break;
+                }
+
+                DesktopActions.TryOpenFileInNotepad(_songPromptPath, out var notepadMessage);
+                _songPromptStatusMessage = notepadMessage;
+                break;
+
+            case SongPromptAction.CopyToClipboard:
+                DesktopActions.TryCopyToClipboard(_songPrompt ?? string.Empty, out var clipboardMessage);
+                _songPromptStatusMessage = clipboardMessage;
+                break;
+
+            case SongPromptAction.OpenSunoCreate:
+                DesktopActions.TryOpenUrl("https://suno.com/create", out var browserMessage);
+                _songPromptStatusMessage = browserMessage;
+                break;
+        }
+    }
+
+    private string BuildSongPromptPath()
+    {
+        var sourcePath = _presentation.SourcePath;
+        var directory = Path.GetDirectoryName(sourcePath) ?? string.Empty;
+        var baseName = Path.GetFileNameWithoutExtension(sourcePath);
+        var fileName = $"{baseName}.songprompt.txt";
+        return string.IsNullOrWhiteSpace(directory) ? fileName : Path.Combine(directory, fileName);
+    }
+
+    private void SaveSongPromptToFile()
+    {
+        try
+        {
+            _songPromptPath = BuildSongPromptPath();
+            File.WriteAllText(_songPromptPath, _songPrompt ?? string.Empty);
+        }
+        catch
+        {
+            _songPromptStatusMessage = "Unable to save prompt file.";
+        }
+    }
+
+    private string BuildPromptLengthStatus(string prefix)
+    {
+        var length = (_songPrompt ?? string.Empty).Length;
+        if (length > SunoPromptCharacterLimit)
+        {
+            return $"{prefix} Current length: {length}/{SunoPromptCharacterLimit} (over limit).";
+        }
+
+        return $"{prefix} Current length: {length}/{SunoPromptCharacterLimit}.";
+    }
+
+    private static string? PromptForInput(string prompt)
     {
         Console.Clear();
-        var slide = _presentation.Slides[_currentIndex];
-        var width = Console.WindowWidth;
+        Console.CursorVisible = true;
+        Console.Write(prompt);
+        var value = Console.ReadLine();
+        Console.CursorVisible = false;
+        return value;
+    }
 
-        // Title bar
+    private void RenderCurrentView()
+    {
+        Console.Clear();
+        var width = Math.Max(20, Console.WindowWidth);
+
+        if (_isSongPromptOpen)
+        {
+            RenderSongPromptPage(width);
+            return;
+        }
+
+        if (_session.IsMainMenuOpen)
+        {
+            RenderMainMenu(width);
+            return;
+        }
+
+        var slide = CurrentSlide();
+        RenderSlide(slide, width);
+
+        RenderStatusBar(width);
+    }
+
+    private void RenderSongPromptPage(int width)
+    {
+        var currentLength = (_songPrompt ?? string.Empty).Length;
+
         Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine(Center(slide.Title, width));
+        Console.WriteLine(new string('═', width));
+        Console.WriteLine(Center("CREATE A SONG", width));
+        Console.WriteLine(new string('═', width));
         Console.ResetColor();
-        Console.WriteLine(new string('─', width));
-
-        // Content
         Console.WriteLine();
-        Console.WriteLine(slide.Content);
 
-        // Status bar
-        var status = $" Slide {_currentIndex + 1}/{_presentation.Slides.Count}  [← →] Navigate  [Q] Quit ";
-        Console.SetCursorPosition(0, Console.WindowHeight - 1);
+        Console.WriteLine($"Genre: {_songGenre}");
+        Console.WriteLine($"Suno prompt limit: {SunoPromptCharacterLimit} characters");
+        if (currentLength > SunoPromptCharacterLimit)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Current length: {currentLength}/{SunoPromptCharacterLimit} (over limit)");
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.WriteLine($"Current length: {currentLength}/{SunoPromptCharacterLimit}");
+        }
+        Console.WriteLine($"Prompt file: {_songPromptPath ?? BuildSongPromptPath()}");
+        Console.WriteLine();
+
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("Prompt:");
+        Console.ResetColor();
+        Console.WriteLine(_songPrompt ?? string.Empty);
+        Console.WriteLine();
+
+        for (var index = 0; index < SongPromptActions.Length; index++)
+        {
+            var prefix = index == _songPromptFocusIndex ? ">" : " ";
+            if (index == _songPromptFocusIndex)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"{prefix} {FormatSongPromptAction(SongPromptActions[index])}");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.WriteLine($"{prefix} {FormatSongPromptAction(SongPromptActions[index])}");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_songPromptStatusMessage))
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine(_songPromptStatusMessage);
+            Console.ResetColor();
+        }
+
+        Console.WriteLine();
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.Write(status.PadRight(width));
+        Console.WriteLine("Use ↑/↓ and Enter. Press Esc to return.");
+        Console.ResetColor();
+    }
+
+    private static string FormatSongPromptAction(SongPromptAction action)
+    {
+        return action switch
+        {
+            SongPromptAction.OpenInNotepad => "Open Prompt in Notepad",
+            SongPromptAction.CopyToClipboard => "Copy Prompt to Clipboard",
+            SongPromptAction.OpenSunoCreate => "Open suno.com/create",
+            _ => action.ToString()
+        };
+    }
+
+    private void RenderSlide(Slide slide, int width)
+    {
+        _rowToOptionIndex.Clear();
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        var borderHeight = slide.SlideType == SlideType.TitleSlide ? 2 : 1;
+        var titleLines = AsciiBannerRenderer.Render(slide.Title, width, includeBorder: true, borderHeight: borderHeight).ToList();
+
+        foreach (var line in titleLines)
+        {
+            Console.WriteLine(line);
+        }
+
+        Console.ResetColor();
+        Console.WriteLine();
+
+    var currentRow = Console.CursorTop;
+
+        var optionMap = slide.OptionItems.ToDictionary(o => o.LineIndex);
+        var focusIndex = _session.GetFocusIndex(_session.CurrentSlideIndex);
+
+        for (var index = 0; index < slide.BodyLines.Count; index++)
+        {
+            if (!optionMap.TryGetValue(index, out var option))
+            {
+                Console.WriteLine(slide.BodyLines[index]);
+                currentRow++;
+                continue;
+            }
+
+            var marker = option.IsSelected ? "X" : " ";
+            var optionIndex = slide.OptionItems.IndexOf(option);
+            var prefix = optionIndex == focusIndex ? ">" : " ";
+            if (optionIndex == focusIndex)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"{prefix} [{marker}] {option.Text}");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.WriteLine($"{prefix} [{marker}] {option.Text}");
+            }
+            _rowToOptionIndex[currentRow + 1] = optionIndex;
+            currentRow++;
+        }
+    }
+
+    private bool TryHandleMouseClickSequence()
+    {
+        if (!_session.InputCapability.MouseEnabled)
+        {
+            return false;
+        }
+
+        if (!Console.KeyAvailable)
+        {
+            return false;
+        }
+
+        var sequence = new List<char>();
+        while (Console.KeyAvailable)
+        {
+            sequence.Add(Console.ReadKey(intercept: true).KeyChar);
+            var last = sequence[^1];
+            if (last is 'm' or 'M')
+            {
+                break;
+            }
+        }
+
+        var text = new string(sequence.ToArray());
+        if (!text.StartsWith("[<", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var payload = text[2..].TrimEnd('m', 'M');
+        var parts = payload.Split(';', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(parts[2], out var row))
+        {
+            return false;
+        }
+
+        if (!_rowToOptionIndex.TryGetValue(row, out var optionIndex))
+        {
+            return false;
+        }
+
+        var slide = CurrentSlide();
+        if (optionIndex < 0 || optionIndex >= slide.OptionItems.Count)
+        {
+            return false;
+        }
+
+        slide.OptionItems[optionIndex].IsSelected = !slide.OptionItems[optionIndex].IsSelected;
+        _session.SetFocusIndex(_session.CurrentSlideIndex, optionIndex);
+        PersistState();
+        return true;
+    }
+
+    private void EnableMouseTracking()
+    {
+        if (_session.InputCapability.MouseEnabled)
+        {
+            Console.Write("\u001b[?1000h\u001b[?1006h");
+        }
+    }
+
+    private void DisableMouseTracking()
+    {
+        if (_session.InputCapability.MouseEnabled)
+        {
+            Console.Write("\u001b[?1000l\u001b[?1006l");
+        }
+    }
+
+    private void RenderMainMenu(int width)
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine(new string('═', width));
+        Console.WriteLine(Center("MAIN MENU", width));
+        Console.WriteLine(new string('═', width));
+        Console.ResetColor();
+        Console.WriteLine();
+
+        foreach (var action in _session.MainMenuState.Actions)
+        {
+            var focused = action == _session.MainMenuState.FocusedAction;
+            var prefix = focused ? ">" : " ";
+            if (focused)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"{prefix} {FormatAction(action)}");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.WriteLine($"{prefix} {FormatAction(action)}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("Use ↑/↓ and Enter. Press Esc to return.");
+        Console.ResetColor();
+    }
+
+    private static string FormatAction(MainMenuAction action)
+    {
+        return action switch
+        {
+            MainMenuAction.Exit => "Exit",
+            MainMenuAction.StartNew => "Start New",
+            MainMenuAction.CreateSong => "Create a Song",
+            _ => action.ToString()
+        };
+    }
+
+    private void RenderStatusBar(int width)
+    {
+        var slidePosition = Math.Clamp(_session.CurrentSlideIndex + 1, 1, _presentation.Slides.Count);
+        var status = $" Slide {slidePosition}/{_presentation.Slides.Count}  [← →] Navigate  [↑ ↓ Space] Options  [Ins] Note  [F1] Notes  [Esc] Menu ";
+
+        var row = Math.Max(0, Console.WindowHeight - 1);
+        Console.SetCursorPosition(0, row);
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.Write(status.PadRight(Math.Max(width, status.Length)));
         Console.ResetColor();
     }
 

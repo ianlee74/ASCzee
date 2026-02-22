@@ -2,7 +2,7 @@
 
 ## Phase 1 – Project Scaffold ✅
 - [x] Create `ASCzee.slnx` solution
-- [x] Create `src/ASCzee` console app project (net10.0)
+- [x] Create `src/ASCzee` console app project (net8.0)
 - [x] Create `src/ASCzee.Tests` xUnit test project
 
 ## Phase 2 – Core Domain ✅

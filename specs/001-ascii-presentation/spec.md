@@ -51,5 +51,5 @@ Run:  ASCzee my-talk.ascz
 ## Success Criteria
 
 - **SC-001**: All unit tests for `PresentationParser` pass.
-- **SC-002**: The app compiles and runs without error on .NET 10.
+- **SC-002**: The app compiles and runs without error on .NET 8.
 - **SC-003**: `build.sh`, `run.sh`, and `test.sh` scripts all succeed.

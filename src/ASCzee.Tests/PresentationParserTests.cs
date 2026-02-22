@@ -5,53 +5,59 @@ public class PresentationParserTests
     [Fact]
     public void Parse_EmptyString_ReturnsEmptyPresentation()
     {
-        var result = PresentationParser.Parse(string.Empty);
-        Assert.Empty(result.Slides);
-    }
-
-    [Fact]
-    public void Parse_SingleSlideWithTitle_ExtractsTitle()
-    {
-        var markup = "# Hello World\n\nSome content here.";
-        var result = PresentationParser.Parse(markup);
-
+        var result = PresentationParser.Parse(string.Empty, "deck.md", "deck.notes.md");
         Assert.Single(result.Slides);
-        Assert.Equal("Hello World", result.Slides[0].Title);
-        Assert.Equal("Some content here.", result.Slides[0].Content);
     }
 
     [Fact]
-    public void Parse_MultipleSlides_ReturnsCorrectCount()
+    public void Parse_TitleAndStandardHeading_CreatesTwoSlides()
     {
-        var markup = "# Slide 1\n\nContent 1\n\n---\n# Slide 2\n\nContent 2";
-        var result = PresentationParser.Parse(markup);
+        var markup = "# Hello World\nIntro\n\n## Agenda\nPoint";
+        var result = PresentationParser.Parse(markup, "deck.md", "deck.notes.md");
 
         Assert.Equal(2, result.Slides.Count);
+        Assert.Equal("Hello World", result.Slides[0].Title);
+        Assert.Equal(SlideType.TitleSlide, result.Slides[0].SlideType);
+        Assert.Equal("Agenda", result.Slides[1].Title);
+        Assert.Equal(SlideType.StandardSlide, result.Slides[1].SlideType);
     }
 
     [Fact]
-    public void Parse_UsesFirstSlideTitleAsPresentationTitle()
+    public void Parse_ThirdLevelHeading_StaysInBody()
     {
-        var markup = "# My Presentation\n\nIntro\n\n---\n# Second Slide\n\nBody";
-        var result = PresentationParser.Parse(markup);
-
-        Assert.Equal("My Presentation", result.Title);
-    }
-
-    [Fact]
-    public void Parse_SlideWithNoTitle_HasEmptyTitle()
-    {
-        var markup = "Just some content without a title.";
-        var result = PresentationParser.Parse(markup);
+        var markup = "## Slide\n### Subheading\nBody";
+        var result = PresentationParser.Parse(markup, "deck.md", "deck.notes.md");
 
         Assert.Single(result.Slides);
-        Assert.Equal(string.Empty, result.Slides[0].Title);
+        Assert.Contains("### Subheading", result.Slides[0].BodyLines);
+    }
+
+    [Fact]
+    public void Parse_TaskListItems_ExtractsOptionItems()
+    {
+        var markup = "## Slide\n- [ ] First\n- [x] Second";
+        var result = PresentationParser.Parse(markup, "deck.md", "deck.notes.md");
+
+        var options = result.Slides[0].OptionItems;
+        Assert.Equal(2, options.Count);
+        Assert.False(options[0].IsSelected);
+        Assert.True(options[1].IsSelected);
+    }
+
+    [Fact]
+    public void Parse_NotesHeading_SetsNotesSlideType()
+    {
+        var markup = "## Presentation Notes\n- one";
+        var result = PresentationParser.Parse(markup, "deck.md", "deck.notes.md");
+
+        Assert.Single(result.Slides);
+        Assert.Equal(SlideType.NotesSlide, result.Slides[0].SlideType);
     }
 
     [Fact]
     public void Parse_NullInput_ThrowsArgumentNullException()
     {
-        Assert.Throws<ArgumentNullException>(() => PresentationParser.Parse(null!));
+        Assert.Throws<ArgumentNullException>(() => PresentationParser.Parse(null!, "deck.md", "deck.notes.md"));
     }
 }
 

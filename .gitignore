@@ -52,3 +52,20 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# .NET user/solution artifacts
+*.user
+*.suo
+packages/
+
+# Environment and temp files
+.env*
+*.tmp
+*.swp
+*.notes.md
+
+# Editor and OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
