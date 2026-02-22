@@ -694,7 +694,15 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         ResetForeground();
         Console.WriteLine();
 
-    var currentRow = Console.CursorTop;
+        var currentRow = Console.CursorTop;
+        var contentLines = slide.BodyLines.Count + CountSupplementalSlideLines(slide);
+        var contentAreaHeight = Math.Max(0, Console.WindowHeight - 1 - currentRow);
+        var topPadding = Math.Max(0, (contentAreaHeight - contentLines) / 2);
+        for (var padIndex = 0; padIndex < topPadding; padIndex++)
+        {
+            Console.WriteLine();
+            currentRow++;
+        }
 
         var optionMap = slide.OptionItems.ToDictionary(o => o.LineIndex);
         var focusIndex = _session.GetFocusIndex(_session.CurrentSlideIndex);
@@ -703,7 +711,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         {
             if (!optionMap.TryGetValue(index, out var option))
             {
-                WriteBodyLineWithHyperlinks(slide.BodyLines[index]);
+                WriteBodyLineWithHyperlinks(slide.BodyLines[index], centered: true, width: width);
                 currentRow++;
                 continue;
             }
@@ -719,9 +727,11 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         if (slide.Hyperlinks.Count > 0)
         {
             Console.WriteLine();
+            currentRow++;
             Console.ForegroundColor = ConsoleColor.DarkCyan;
             Console.WriteLine("Links:");
             Console.ResetColor();
+            currentRow++;
 
             var focusIndexValue = _session.GetFocusIndex(_session.CurrentSlideIndex);
             for (var linkIndex = 0; linkIndex < slide.Hyperlinks.Count; linkIndex++)
@@ -750,21 +760,45 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                     ResetForeground();
                     WriteLineNormal($" -> {link.Url}");
                 }
+
+                currentRow++;
             }
 
             if (!string.IsNullOrWhiteSpace(_slideStatusMessage))
             {
                 Console.WriteLine();
+                currentRow++;
                 Console.ForegroundColor = ConsoleColor.DarkYellow;
                 Console.WriteLine(_slideStatusMessage);
                 Console.ResetColor();
+                currentRow++;
             }
         }
     }
 
-    private void WriteBodyLineWithHyperlinks(string line)
+    private int CountSupplementalSlideLines(Slide slide)
+    {
+        if (slide.Hyperlinks.Count == 0)
+        {
+            return 0;
+        }
+
+        var statusLines = string.IsNullOrWhiteSpace(_slideStatusMessage) ? 0 : 2;
+        return 2 + slide.Hyperlinks.Count + statusLines;
+    }
+
+    private void WriteBodyLineWithHyperlinks(string line, bool centered, int width)
     {
         var matches = HyperlinkRegex.Matches(line);
+        if (centered)
+        {
+            var visibleLength = GetVisibleBodyLineLength(line, matches);
+            if (visibleLength < width)
+            {
+                WriteNormal(new string(' ', (width - visibleLength) / 2));
+            }
+        }
+
         if (matches.Count == 0)
         {
             WriteLineNormal(line);
@@ -793,6 +827,34 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         }
 
         Console.WriteLine();
+    }
+
+    private static int GetVisibleBodyLineLength(string line, MatchCollection matches)
+    {
+        if (matches.Count == 0)
+        {
+            return line.Length;
+        }
+
+        var length = 0;
+        var lastIndex = 0;
+        foreach (Match match in matches)
+        {
+            if (match.Index > lastIndex)
+            {
+                length += match.Index - lastIndex;
+            }
+
+            length += match.Groups["text"].Value.Length;
+            lastIndex = match.Index + match.Length;
+        }
+
+        if (lastIndex < line.Length)
+        {
+            length += line.Length - lastIndex;
+        }
+
+        return length;
     }
 
     private bool TryHandleMouseClickSequence()
