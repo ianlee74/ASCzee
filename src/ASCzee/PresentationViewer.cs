@@ -5,7 +5,7 @@ namespace ASCzee;
 /// <summary>
 /// Interactive console viewer for an ASCzee <see cref="Presentation"/>.
 /// </summary>
-public class PresentationViewer(Presentation presentation, NotesArtifactService notesArtifactService, SongPromptGenerator songPromptGenerator)
+public class PresentationViewer(Presentation presentation, NotesArtifactService notesArtifactService, SongPromptGenerator songPromptGenerator, PresentationStyle style)
 {
     private const int SunoPromptCharacterLimit = 1000;
 
@@ -57,6 +57,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
     private readonly Presentation _presentation = presentation;
     private readonly NotesArtifactService _notesArtifactService = notesArtifactService;
     private readonly SongPromptGenerator _songPromptGenerator = songPromptGenerator;
+    private readonly PresentationStyle _style = style;
     private readonly PresentationSession _session = new();
 
     private string? _songPrompt;
@@ -223,9 +224,11 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                 return true;
 
             case MainMenuAction.StartNew:
-                _notesArtifactService.Delete(_presentation.NotesPath);
+                DeleteArtifactIfExists(_presentation.NotesPath);
+                DeleteArtifactIfExists(_songPromptPath ?? BuildSongPromptPath());
                 _session.Notes.Clear();
                 _songPrompt = null;
+                _songPromptPath = null;
                 _isSongPromptOpen = false;
                 foreach (var slide in _presentation.Slides)
                 {
@@ -444,13 +447,14 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                 var prefix = index == selectedIndex ? ">" : " ";
                 if (index == selectedIndex)
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"{prefix} {PopularGenres[index]}");
-                    Console.ResetColor();
+                    SetForeground(_style.SelectorColor);
+                    Console.Write(prefix);
+                    ResetForeground();
+                    WriteLineNormal($" {PopularGenres[index]}");
                 }
                 else
                 {
-                    Console.WriteLine($"{prefix} {PopularGenres[index]}");
+                    WriteLineNormal($"{prefix} {PopularGenres[index]}");
                 }
             }
 
@@ -536,6 +540,26 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         }
     }
 
+    private static void DeleteArtifactIfExists(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Ignore artifact deletion failures during session reset.
+        }
+    }
+
     private string BuildPromptLengthStatus(string prefix)
     {
         var length = (_songPrompt ?? string.Empty).Length;
@@ -609,7 +633,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine("Prompt:");
         Console.ResetColor();
-        Console.WriteLine(_songPrompt ?? string.Empty);
+        WriteLineNormal(_songPrompt ?? string.Empty);
         Console.WriteLine();
 
         for (var index = 0; index < SongPromptActions.Length; index++)
@@ -617,13 +641,14 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
             var prefix = index == _songPromptFocusIndex ? ">" : " ";
             if (index == _songPromptFocusIndex)
             {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"{prefix} {FormatSongPromptAction(SongPromptActions[index])}");
-                Console.ResetColor();
+                SetForeground(_style.SelectorColor);
+                Console.Write(prefix);
+                ResetForeground();
+                WriteLineNormal($" {FormatSongPromptAction(SongPromptActions[index])}");
             }
             else
             {
-                Console.WriteLine($"{prefix} {FormatSongPromptAction(SongPromptActions[index])}");
+                WriteLineNormal($"{prefix} {FormatSongPromptAction(SongPromptActions[index])}");
             }
         }
 
@@ -656,7 +681,8 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
     {
         _rowToOptionIndex.Clear();
 
-        Console.ForegroundColor = ConsoleColor.Cyan;
+        var headerColor = slide.SlideType == SlideType.TitleSlide ? _style.Header1 : _style.Header2;
+        SetForeground(headerColor);
         var borderHeight = slide.SlideType == SlideType.TitleSlide ? 2 : 1;
         var titleLines = AsciiBannerRenderer.Render(slide.Title, width, includeBorder: true, borderHeight: borderHeight).ToList();
 
@@ -665,7 +691,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
             Console.WriteLine(line);
         }
 
-        Console.ResetColor();
+        ResetForeground();
         Console.WriteLine();
 
     var currentRow = Console.CursorTop;
@@ -685,16 +711,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
             var marker = option.IsSelected ? "X" : " ";
             var optionIndex = slide.OptionItems.IndexOf(option);
             var prefix = optionIndex == focusIndex ? ">" : " ";
-            if (optionIndex == focusIndex)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"{prefix} [{marker}] {option.Text}");
-                Console.ResetColor();
-            }
-            else
-            {
-                Console.WriteLine($"{prefix} [{marker}] {option.Text}");
-            }
+            WriteOptionLine(prefix, optionIndex == focusIndex, marker, option.Text);
             _rowToOptionIndex[currentRow + 1] = optionIndex;
             currentRow++;
         }
@@ -715,20 +732,24 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
 
                 if (isFocused)
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.Write("> ");
-                    Console.ResetColor();
+                    SetForeground(_style.SelectorColor);
+                    Console.Write(">");
+                    ResetForeground();
+                    WriteNormal($" [{linkIndex + 1}] ");
+                    SetForeground(_style.HyperlinkText);
+                    Console.Write(link.Text);
+                    ResetForeground();
+                    WriteNormal($" -> {link.Url}");
+                    Console.WriteLine();
                 }
                 else
                 {
-                    Console.Write("  ");
+                    WriteNormal($"  [{linkIndex + 1}] ");
+                    SetForeground(_style.HyperlinkText);
+                    Console.Write(link.Text);
+                    ResetForeground();
+                    WriteLineNormal($" -> {link.Url}");
                 }
-
-                Console.Write($"[{linkIndex + 1}] ");
-                Console.ForegroundColor = ConsoleColor.Blue;
-                Console.Write(link.Text);
-                Console.ResetColor();
-                Console.WriteLine($" -> {link.Url}");
             }
 
             if (!string.IsNullOrWhiteSpace(_slideStatusMessage))
@@ -741,12 +762,12 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         }
     }
 
-    private static void WriteBodyLineWithHyperlinks(string line)
+    private void WriteBodyLineWithHyperlinks(string line)
     {
         var matches = HyperlinkRegex.Matches(line);
         if (matches.Count == 0)
         {
-            Console.WriteLine(line);
+            WriteLineNormal(line);
             return;
         }
 
@@ -755,20 +776,20 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         {
             if (match.Index > lastIndex)
             {
-                Console.Write(line[lastIndex..match.Index]);
+                WriteNormal(line[lastIndex..match.Index]);
             }
 
             var linkText = match.Groups["text"].Value;
-            Console.ForegroundColor = ConsoleColor.Blue;
+            SetForeground(_style.HyperlinkText);
             Console.Write(linkText);
-            Console.ResetColor();
+            ResetForeground();
 
             lastIndex = match.Index + match.Length;
         }
 
         if (lastIndex < line.Length)
         {
-            Console.Write(line[lastIndex..]);
+            WriteNormal(line[lastIndex..]);
         }
 
         Console.WriteLine();
@@ -863,13 +884,14 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
             var prefix = focused ? ">" : " ";
             if (focused)
             {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"{prefix} {FormatAction(action)}");
-                Console.ResetColor();
+                SetForeground(_style.SelectorColor);
+                Console.Write(prefix);
+                ResetForeground();
+                WriteLineNormal($" {FormatAction(action)}");
             }
             else
             {
-                Console.WriteLine($"{prefix} {FormatAction(action)}");
+                WriteLineNormal($"{prefix} {FormatAction(action)}");
             }
         }
 
@@ -911,5 +933,58 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         if (text.Length >= width) return text;
         var padding = (width - text.Length) / 2;
         return text.PadLeft(text.Length + padding);
+    }
+
+    private void SetForeground(RgbColor color)
+    {
+        Console.Write(color.ToAnsiForegroundCode());
+    }
+
+    private static void ResetForeground()
+    {
+        Console.Write("\u001b[39m");
+    }
+
+    private void WriteNormal(string text)
+    {
+        SetForeground(_style.NormalText);
+        Console.Write(text);
+        ResetForeground();
+    }
+
+    private void WriteLineNormal(string text)
+    {
+        SetForeground(_style.NormalText);
+        Console.WriteLine(text);
+        ResetForeground();
+    }
+
+    private void WriteOptionLine(string prefix, bool isFocused, string marker, string optionText)
+    {
+        if (isFocused)
+        {
+            SetForeground(_style.SelectorColor);
+            Console.Write(prefix);
+            ResetForeground();
+        }
+        else
+        {
+            WriteNormal(prefix);
+        }
+
+        WriteNormal(" [");
+        if (string.Equals(marker, "X", StringComparison.Ordinal))
+        {
+            SetForeground(_style.SelectionColor);
+            Console.Write("X");
+            ResetForeground();
+        }
+        else
+        {
+            WriteNormal(" ");
+        }
+
+        WriteNormal($"] {optionText}");
+        Console.WriteLine();
     }
 }

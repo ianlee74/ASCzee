@@ -51,6 +51,7 @@ else
 }
 
 var presentation = PresentationParser.Parse(content, filePath, notesPath);
-var viewer = new PresentationViewer(presentation, notesService, new SongPromptGenerator());
+var style = PresentationStyleLoader.Load(filePath);
+var viewer = new PresentationViewer(presentation, notesService, new SongPromptGenerator(), style);
 viewer.Run();
 return 0;
