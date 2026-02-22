@@ -41,6 +41,15 @@ After adding notes:
 - Press F1 to jump to notes slide
 - Press Esc to return here
 
+## Hyperlink Validation
+Markdown links in slide content should render link text in blue.
+
+- Project home: [ASCzee repository](https://github.com/)
+- Suno create page: [Open Suno Create](https://suno.com/create)
+- .NET docs: [Learn .NET](https://dotnet.microsoft.com/en-us/learn)
+
+Use Up/Down to focus the link list at the bottom, then press Enter to open the selected link.
+
 ## Main Menu Actions
 From this (non-notes) slide, press Esc to open the main menu.
 
@@ -48,6 +57,12 @@ Validate each action:
 - Exit: closes app and keeps `.notes.md`
 - Start New: removes current `.notes.md` and restarts at slide 1
 - Create a Song: generates a copyable prompt from slides + options + notes
+
+## Hyperlink Testing
+Markdown hyperlinks should be selectable and selecting them should open the hyperlink in a browser window.
+
+- [Amazon.com](https://amazon.com)
+- [SavvyFi.co](https://savvyfi.co)
 
 ## Persistence / Resume
 1. Toggle some options and add at least one note.

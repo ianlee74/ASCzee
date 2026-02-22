@@ -25,6 +25,7 @@ ASCzee turns markdown files into interactive terminal presentations with keyboar
 - Markdown slide parsing (`#` and `##` define slide boundaries)
 - Block-style ASCII art headers for presentation titles and slide headers
 - Interactive task-list options using GitHub checkbox syntax (`- [ ]`, `- [x]`)
+- Markdown hyperlink rendering with blue link text and selectable link list
 - Notes capture and resume via `.notes.md` artifact
 - Main menu actions: `Exit`, `Start New`, `Create a Song`
 - Song prompt workflow with:
@@ -59,6 +60,8 @@ Use [Default.md](Default.md) as a built-in validation deck.
   - stay inside the current slide body
 - `- [ ] Task` / `- [x] Task`
   - become interactive option rows
+- `[Label](https://example.com)`
+  - renders `Label` in blue and appears in the selectable links list at slide bottom
 
 ## Controls
 
@@ -67,6 +70,7 @@ Use [Default.md](Default.md) as a built-in validation deck.
 - `Left` / `Right`: previous / next slide
 - `Up` / `Down`: move option focus
 - `Space`: toggle focused option (`[]` ↔ `[X]`)
+- `Enter`: open focused hyperlink (when link focus is active)
 - `Insert`: capture presenter note
 - `F1`: jump to notes slide
 - `Esc`:

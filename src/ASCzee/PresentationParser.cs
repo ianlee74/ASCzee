@@ -15,6 +15,7 @@ public static class PresentationParser
 {
     private static readonly Regex SlideHeadingRegex = new(@"^(#{1,2})\s+(.+)$", RegexOptions.Compiled);
     private static readonly Regex TaskListRegex = new(@"^\s*[-*]\s\[( |x|X)\]\s+(.+)$", RegexOptions.Compiled);
+    private static readonly Regex HyperlinkRegex = new(@"\[(?<text>[^\]]+)\]\((?<url>[^)\s]+)\)", RegexOptions.Compiled);
 
     public static Presentation Parse(string markup, string sourcePath, string notesPath)
     {
@@ -87,6 +88,7 @@ public static class PresentationParser
     private static Slide ParseSection((string Heading, int Level, List<string> BodyLines) section)
     {
         var optionItems = new List<OptionBoxItem>();
+        var hyperlinks = new List<HyperlinkItem>();
         var bodyLines = section.BodyLines.ToList();
 
         for (var index = 0; index < bodyLines.Count; index++)
@@ -107,18 +109,45 @@ public static class PresentationParser
             bodyLines[index] = BuildTaskLine(optionItems[^1]);
         }
 
-        TrimOuterBlankLines(bodyLines, optionItems);
+        ParseHyperlinks(bodyLines, hyperlinks);
+
+        TrimOuterBlankLines(bodyLines, optionItems, hyperlinks);
 
         return new Slide
         {
             Title = section.Heading,
             SlideType = section.Level == 1 ? SlideType.TitleSlide : SlideType.StandardSlide,
             BodyLines = bodyLines,
-            OptionItems = optionItems
+            OptionItems = optionItems,
+            Hyperlinks = hyperlinks
         };
     }
 
-    private static void TrimOuterBlankLines(List<string> lines, List<OptionBoxItem> options)
+    private static void ParseHyperlinks(IReadOnlyList<string> lines, List<HyperlinkItem> hyperlinks)
+    {
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        {
+            foreach (Match match in HyperlinkRegex.Matches(lines[lineIndex]))
+            {
+                var text = match.Groups["text"].Value.Trim();
+                var url = match.Groups["url"].Value.Trim();
+
+                if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(url))
+                {
+                    continue;
+                }
+
+                hyperlinks.Add(new HyperlinkItem
+                {
+                    LineIndex = lineIndex,
+                    Text = text,
+                    Url = url
+                });
+            }
+        }
+    }
+
+    private static void TrimOuterBlankLines(List<string> lines, List<OptionBoxItem> options, List<HyperlinkItem> hyperlinks)
     {
         while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[0]))
         {
@@ -126,6 +155,11 @@ public static class PresentationParser
             foreach (var option in options)
             {
                 option.LineIndex--;
+            }
+
+            foreach (var hyperlink in hyperlinks)
+            {
+                hyperlink.LineIndex--;
             }
         }
 

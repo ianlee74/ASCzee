@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ASCzee;
 
 /// <summary>
@@ -63,7 +65,9 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
     private bool _isSongPromptOpen;
     private int _songPromptFocusIndex;
     private string? _songPromptStatusMessage;
+    private string? _slideStatusMessage;
     private readonly Dictionary<int, int> _rowToOptionIndex = [];
+    private static readonly Regex HyperlinkRegex = new(@"\[(?<text>[^\]]+)\]\((?<url>[^)\s]+)\)", RegexOptions.Compiled);
 
     public void Run()
     {
@@ -125,6 +129,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                 {
                     _session.CurrentSlideIndex++;
                     _songPrompt = null;
+                    _slideStatusMessage = null;
                 }
                 return false;
 
@@ -132,6 +137,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                 if (_session.CurrentSlideIndex > 0)
                 {
                     _session.CurrentSlideIndex--;
+                    _slideStatusMessage = null;
                 }
                 return false;
 
@@ -174,6 +180,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
                 return false;
 
             case InputAction.Confirm:
+                OpenFocusedHyperlink();
                 return false;
 
             case InputAction.None:
@@ -303,16 +310,17 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
     private void MoveFocus(int delta)
     {
         var slide = CurrentSlide();
-        if (slide.OptionItems.Count == 0)
+        var interactiveCount = slide.OptionItems.Count + slide.Hyperlinks.Count;
+        if (interactiveCount == 0)
         {
             return;
         }
 
         var current = _session.GetFocusIndex(_session.CurrentSlideIndex);
-        var next = (current + delta) % slide.OptionItems.Count;
+        var next = (current + delta) % interactiveCount;
         if (next < 0)
         {
-            next += slide.OptionItems.Count;
+            next += interactiveCount;
         }
 
         _session.SetFocusIndex(_session.CurrentSlideIndex, next);
@@ -334,6 +342,26 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
 
         slide.OptionItems[focus].IsSelected = !slide.OptionItems[focus].IsSelected;
         PersistState();
+    }
+
+    private void OpenFocusedHyperlink()
+    {
+        var slide = CurrentSlide();
+        if (slide.Hyperlinks.Count == 0)
+        {
+            return;
+        }
+
+        var focus = _session.GetFocusIndex(_session.CurrentSlideIndex);
+        var linkIndex = focus - slide.OptionItems.Count;
+        if (linkIndex < 0 || linkIndex >= slide.Hyperlinks.Count)
+        {
+            return;
+        }
+
+        var link = slide.Hyperlinks[linkIndex];
+        DesktopActions.TryOpenUrl(link.Url, out var message);
+        _slideStatusMessage = message;
     }
 
     private void PersistState()
@@ -649,7 +677,7 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
         {
             if (!optionMap.TryGetValue(index, out var option))
             {
-                Console.WriteLine(slide.BodyLines[index]);
+                WriteBodyLineWithHyperlinks(slide.BodyLines[index]);
                 currentRow++;
                 continue;
             }
@@ -670,6 +698,80 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
             _rowToOptionIndex[currentRow + 1] = optionIndex;
             currentRow++;
         }
+
+        if (slide.Hyperlinks.Count > 0)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkCyan;
+            Console.WriteLine("Links:");
+            Console.ResetColor();
+
+            var focusIndexValue = _session.GetFocusIndex(_session.CurrentSlideIndex);
+            for (var linkIndex = 0; linkIndex < slide.Hyperlinks.Count; linkIndex++)
+            {
+                var absoluteFocusIndex = slide.OptionItems.Count + linkIndex;
+                var isFocused = absoluteFocusIndex == focusIndexValue;
+                var link = slide.Hyperlinks[linkIndex];
+
+                if (isFocused)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.Write("> ");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.Write("  ");
+                }
+
+                Console.Write($"[{linkIndex + 1}] ");
+                Console.ForegroundColor = ConsoleColor.Blue;
+                Console.Write(link.Text);
+                Console.ResetColor();
+                Console.WriteLine($" -> {link.Url}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_slideStatusMessage))
+            {
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine(_slideStatusMessage);
+                Console.ResetColor();
+            }
+        }
+    }
+
+    private static void WriteBodyLineWithHyperlinks(string line)
+    {
+        var matches = HyperlinkRegex.Matches(line);
+        if (matches.Count == 0)
+        {
+            Console.WriteLine(line);
+            return;
+        }
+
+        var lastIndex = 0;
+        foreach (Match match in matches)
+        {
+            if (match.Index > lastIndex)
+            {
+                Console.Write(line[lastIndex..match.Index]);
+            }
+
+            var linkText = match.Groups["text"].Value;
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.Write(linkText);
+            Console.ResetColor();
+
+            lastIndex = match.Index + match.Length;
+        }
+
+        if (lastIndex < line.Length)
+        {
+            Console.Write(line[lastIndex..]);
+        }
+
+        Console.WriteLine();
     }
 
     private bool TryHandleMouseClickSequence()
@@ -792,6 +894,10 @@ public class PresentationViewer(Presentation presentation, NotesArtifactService 
     {
         var slidePosition = Math.Clamp(_session.CurrentSlideIndex + 1, 1, _presentation.Slides.Count);
         var status = $" Slide {slidePosition}/{_presentation.Slides.Count}  [← →] Navigate  [↑ ↓ Space] Options  [Ins] Note  [F1] Notes  [Esc] Menu ";
+        if (CurrentSlide().Hyperlinks.Count > 0)
+        {
+            status = $" Slide {slidePosition}/{_presentation.Slides.Count}  [← →] Navigate  [↑ ↓] Focus  [Enter] Open Link  [Space] Toggle Option  [Ins] Note  [F1] Notes  [Esc] Menu ";
+        }
 
         var row = Math.Max(0, Console.WindowHeight - 1);
         Console.SetCursorPosition(0, row);
