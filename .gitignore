@@ -63,6 +63,7 @@ packages/
 *.tmp
 *.swp
 *.notes.md
+*.songprompt.txt
 
 # Editor and OS artifacts
 .vscode/
